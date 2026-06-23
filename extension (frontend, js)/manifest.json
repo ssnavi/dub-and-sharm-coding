@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Blocked Categories YouTube Helper",
+  "version": "1.0.0",
+  "description": "Block YouTube videos based on blocked category checks against a local backend.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
