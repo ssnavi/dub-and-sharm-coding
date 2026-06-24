@@ -17,6 +17,15 @@
       "matches": ["https://*.youtube.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.instructure.com/*",
+        "https://classroom.google.com/*",
+        "https://*.schoology.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
     }
   ]
 }

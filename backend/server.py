@@ -18,11 +18,14 @@ app.add_middleware(
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 THRESHOLD = 0.15
+ALLOW_ONLY_THRESHOLD = 0.30
 
 class VideoCheckRequest(BaseModel):
     title: str
     description: str
-    blocked_categories: list[str]
+    blocked_categories: list[str] = []
+    allowed_categories: list[str] = []
+    mode: str = "block"
 
 class VideoCheckResponse(BaseModel):
     action: str
@@ -43,7 +46,7 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
-def contains_blocked_keyword(video_text: str, category: str) -> bool:
+def contains_keyword_match(video_text: str, category: str) -> bool:
     normalized_video = normalize_text(video_text)
     normalized_category = normalize_text(category)
 
@@ -64,27 +67,11 @@ def category_comparison_texts(category: str) -> list[str]:
     ]
 
 
-@app.post("/check-video", response_model=VideoCheckResponse)
-def check_video(payload: VideoCheckRequest):
-    if not payload.blocked_categories:
-        return {"action": "allow", "reason": "no_blocked_categories"}
-
-    video_text = f"{payload.title}. {payload.description}".strip()
-
-    for category in payload.blocked_categories:
-        if contains_blocked_keyword(video_text, category):
-            return {
-                "action": "block",
-                "reason": "keyword",
-                "matched_category": category,
-                "similarity": 1.0,
-            }
-
-    video_embedding = model.encode(video_text, convert_to_numpy=True)
+def get_best_match(video_embedding: np.ndarray, categories: list[str]) -> tuple[str, float]:
     best_category = ""
     best_similarity = 0.0
 
-    for category in payload.blocked_categories:
+    for category in categories:
         comparison_embeddings = model.encode(
             category_comparison_texts(category),
             convert_to_numpy=True,
@@ -98,17 +85,62 @@ def check_video(payload: VideoCheckRequest):
             best_similarity = similarity
             best_category = category
 
-        if similarity > THRESHOLD:
+    return best_category, best_similarity
+
+
+def evaluate_video_against_categories(video_text: str, categories: list[str]) -> tuple[str, float, bool]:
+    for category in categories:
+        if contains_keyword_match(video_text, category):
+            return category, 1.0, True
+
+    video_embedding = model.encode(video_text, convert_to_numpy=True)
+    best_category, best_similarity = get_best_match(video_embedding, categories)
+    return best_category, best_similarity, False
+
+
+@app.post("/check-video", response_model=VideoCheckResponse)
+def check_video(payload: VideoCheckRequest):
+    video_text = f"{payload.title}. {payload.description}".strip()
+    categories = payload.allowed_categories if payload.mode == "allow_only" else payload.blocked_categories
+
+    if not categories:
+        return {
+            "action": "allow",
+            "reason": f"no_{payload.mode}_categories",
+            "matched_category": "",
+            "similarity": 0.0,
+        }
+
+    matched_category, similarity, keyword_match = evaluate_video_against_categories(video_text, categories)
+
+    if payload.mode == "block":
+        if keyword_match or similarity > THRESHOLD:
             return {
                 "action": "block",
-                "reason": "semantic_similarity",
-                "matched_category": category,
+                "reason": "semantic_similarity" if not keyword_match else "keyword",
+                "matched_category": matched_category,
                 "similarity": similarity,
             }
 
+        return {
+            "action": "allow",
+            "reason": "below_similarity_threshold",
+            "matched_category": matched_category,
+            "similarity": similarity,
+        }
+
+    # allow_only mode
+    if keyword_match or similarity >= ALLOW_ONLY_THRESHOLD:
+        return {
+            "action": "allow",
+            "reason": "allowed_category_match" if not keyword_match else "keyword",
+            "matched_category": matched_category,
+            "similarity": similarity,
+        }
+
     return {
-        "action": "allow",
-        "reason": "below_similarity_threshold",
-        "matched_category": best_category,
-        "similarity": best_similarity,
+        "action": "block",
+        "reason": "not_allowed_category",
+        "matched_category": matched_category,
+        "similarity": similarity,
     }
